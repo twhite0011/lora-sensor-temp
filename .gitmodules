@@ -1,0 +1,3 @@
+[submodule "components/lmic"]
+	path = components/lmic
+	url = https://github.com/twhite0011/lmic-esp-idf.git
