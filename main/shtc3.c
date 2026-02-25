@@ -48,10 +48,10 @@ esp_err_t shtc3_init(void)
     ESP_RETURN_ON_ERROR(i2c_driver_install(I2C_PORT_NUM, cfg.mode, 0, 0, 0), TAG, "i2c_driver_install failed");
 
     // Ensure sensor is awake before measurements.
-    esp_err_t err = shtc3_write_cmd(SHTC3_CMD_WAKEUP);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "wake command failed: %s", esp_err_to_name(err));
-        return err;
+    esp_err_t ret = shtc3_write_cmd(SHTC3_CMD_WAKEUP);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "wake command failed: %s", esp_err_to_name(ret));
+        return ret;
     }
 
     vTaskDelay(pdMS_TO_TICKS(2));

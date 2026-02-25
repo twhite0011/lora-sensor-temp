@@ -25,8 +25,6 @@ static volatile bool s_tx_done = false;
 static volatile bool s_join_done = false;
 static volatile bool s_join_failed = false;
 #define LORA_RADIO_SETTLE_DELAY_MS 250
-#define LORA_DEBUG_KEEP_AWAKE_ON_JOIN_FAIL 1
-#define LORA_DEBUG_AWAKE_SECONDS 300
 
 #define SESSION_MAGIC 0x4C4D4943u
 #define SESSION_VERSION 1u
@@ -53,7 +51,6 @@ const lmic_pinmap lmic_pins = {
     .spi = {LORA_PIN_MISO, LORA_PIN_MOSI, LORA_PIN_SCK},
 };
 
-#if LORA_USE_OTAA
 void os_getArtEui(u1_t *buf)
 {
     memcpy(buf, LORA_APPEUI, 8);
@@ -68,34 +65,9 @@ void os_getDevKey(u1_t *buf)
 {
     memcpy(buf, LORA_APPKEY, 16);
 }
-#endif
-
-static const char *lmic_event_name(ev_t ev)
-{
-    switch (ev) {
-        case EV_SCAN_TIMEOUT: return "EV_SCAN_TIMEOUT";
-        case EV_BEACON_FOUND: return "EV_BEACON_FOUND";
-        case EV_BEACON_MISSED: return "EV_BEACON_MISSED";
-        case EV_BEACON_TRACKED: return "EV_BEACON_TRACKED";
-        case EV_JOINING: return "EV_JOINING";
-        case EV_JOINED: return "EV_JOINED";
-        case EV_RFU1: return "EV_RFU1";
-        case EV_JOIN_FAILED: return "EV_JOIN_FAILED";
-        case EV_REJOIN_FAILED: return "EV_REJOIN_FAILED";
-        case EV_TXCOMPLETE: return "EV_TXCOMPLETE";
-        case EV_LOST_TSYNC: return "EV_LOST_TSYNC";
-        case EV_RESET: return "EV_RESET";
-        case EV_RXCOMPLETE: return "EV_RXCOMPLETE";
-        case EV_LINK_DEAD: return "EV_LINK_DEAD";
-        case EV_LINK_ALIVE: return "EV_LINK_ALIVE";
-        default: return "EV_UNKNOWN";
-    }
-}
 
 void onEvent(ev_t ev)
 {
-    ESP_LOGI(TAG, "LMIC event: %s (%d)", lmic_event_name(ev), ev);
-
     switch (ev) {
         case EV_JOINED:
             ESP_LOGI(TAG, "LoRa OTAA joined");
@@ -170,19 +142,19 @@ static esp_err_t read_battery_mv(uint16_t *battery_mv)
         .bitwidth = ADC_BITWIDTH_12,
     };
 
-    esp_err_t err = adc_oneshot_config_channel(adc_handle, channel, &chan_cfg);
-    if (err != ESP_OK) {
+    esp_err_t ret = adc_oneshot_config_channel(adc_handle, channel, &chan_cfg);
+    if (ret != ESP_OK) {
         (void)adc_oneshot_del_unit(adc_handle);
-        return err;
+        return ret;
     }
 
     int64_t sum_raw = 0;
     for (int i = 0; i < BATTERY_ADC_SAMPLES; i++) {
         int raw = 0;
-        err = adc_oneshot_read(adc_handle, channel, &raw);
-        if (err != ESP_OK) {
+        ret = adc_oneshot_read(adc_handle, channel, &raw);
+        if (ret != ESP_OK) {
             (void)adc_oneshot_del_unit(adc_handle);
-            return err;
+            return ret;
         }
         sum_raw += raw;
         vTaskDelay(pdMS_TO_TICKS(2));
@@ -250,29 +222,6 @@ static void radio_power_set_sleep(void)
     (void)gpio_deep_sleep_hold_en();
 }
 
-static void configure_region_channels(void)
-{
-#if defined(CFG_us915) || defined(CFG_au915)
-    if (LORA_SUBBAND < 1 || LORA_SUBBAND > 8) {
-        ESP_LOGW(TAG, "Invalid LORA_SUBBAND=%d, using 1", LORA_SUBBAND);
-    }
-
-    uint8_t sb = (LORA_SUBBAND >= 1 && LORA_SUBBAND <= 8) ? LORA_SUBBAND : 1;
-    uint8_t subband_idx = (uint8_t)(sb - 1);
-    uint8_t ch_base = (uint8_t)(subband_idx * 8);
-
-    // LMIC_selectSubBand controls 125kHz channels (0-63). Force 500kHz (64-71) too.
-    LMIC_selectSubBand(subband_idx);
-    for (int ch = 64; ch < 72; ch++) {
-        LMIC_disableChannel((u1_t)ch);
-    }
-    LMIC_enableChannel((u1_t)(64 + subband_idx));
-    ESP_LOGD(TAG, "Configured sub-band %u (125kHz ch %u-%u)", sb, ch_base, ch_base + 7);
-#else
-    ESP_LOGW(TAG, "LMIC is not built for US915/AU915; channel mask config skipped");
-#endif
-}
-
 static void enter_deep_sleep(void)
 {
     uint64_t sleep_us = (uint64_t)REPORT_INTERVAL_SECONDS * 1000000ULL;
@@ -286,13 +235,8 @@ static bool wait_for_join(uint32_t timeout_s)
 {
     int64_t start_us = esp_timer_get_time();
     int64_t timeout_us = (int64_t)timeout_s * 1000000LL;
-    uint16_t enforce_ticks = 0;
 
     while (!s_join_done && !s_join_failed && (esp_timer_get_time() - start_us < timeout_us)) {
-        if (++enforce_ticks >= 200) { // ~400ms at 2ms runloop cadence.
-            configure_region_channels();
-            enforce_ticks = 0;
-        }
         os_runloop_once();
         vTaskDelay(pdMS_TO_TICKS(2));
     }
@@ -313,16 +257,19 @@ static bool wait_for_tx_complete(uint32_t timeout_s)
     return s_tx_done;
 }
 
-static void debug_hold_awake_after_join_fail(void)
+static void configure_region_channels(void)
 {
-#if LORA_DEBUG_KEEP_AWAKE_ON_JOIN_FAIL
-    int64_t start_us = esp_timer_get_time();
-    int64_t hold_us = (int64_t)LORA_DEBUG_AWAKE_SECONDS * 1000000LL;
-    ESP_LOGW(TAG, "Join failed; staying awake for %u seconds for LMIC debug", LORA_DEBUG_AWAKE_SECONDS);
-    while (esp_timer_get_time() - start_us < hold_us) {
-        os_runloop_once();
-        vTaskDelay(pdMS_TO_TICKS(10));
+#if defined(CFG_us915) || defined(CFG_au915)
+    uint8_t sb = (LORA_SUBBAND >= 1 && LORA_SUBBAND <= 8) ? LORA_SUBBAND : 1;
+    uint8_t subband_idx = (uint8_t)(sb - 1);
+
+    // Apply 125kHz sub-band and force matching 500kHz channel.
+    LMIC_selectSubBand(subband_idx);
+    for (int ch = 64; ch < 72; ch++) {
+        LMIC_disableChannel((u1_t)ch);
     }
+    LMIC_enableChannel((u1_t)(64 + subband_idx));
+    ESP_LOGI(TAG, "Configured US915 sub-band %u", (unsigned)sb);
 #endif
 }
 
@@ -331,14 +278,12 @@ static bool lora_init_session(void)
     os_init();
     LMIC_reset();
     LMIC_setClockError((MAX_CLOCK_ERROR * LORA_CLOCK_ERROR_PERCENT) / 100);
-
     configure_region_channels();
 
     LMIC_setLinkCheckMode(0);
     LMIC_setAdrMode(0);
     LMIC_setDrTxpow(LORA_TX_DATARATE, LORA_TX_POWER_DBM);
 
-#if LORA_USE_OTAA
     if (s_rtc_session.magic == SESSION_MAGIC &&
         s_rtc_session.version == SESSION_VERSION &&
         s_rtc_session.valid == 1) {
@@ -363,11 +308,6 @@ static bool lora_init_session(void)
         ESP_LOGW(TAG, "OTAA join timeout/failure");
         return false;
     }
-#else
-    // netid = 0 for private network IDs used in many ChirpStack ABP setups.
-    LMIC_setSession(0x0, LORA_DEVADDR, (u1_t *)LORA_NWKSKEY, (u1_t *)LORA_APPSKEY);
-    ESP_LOGI(TAG, "Using ABP session");
-#endif
 
     return true;
 }
@@ -397,24 +337,24 @@ void app_main(void)
     float humidity_rh = 0.0f;
     uint16_t battery_mv = 0;
 
-    esp_err_t err = shtc3_init();
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "SHTC3 init failed: %s", esp_err_to_name(err));
+    esp_err_t ret = shtc3_init();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "SHTC3 init failed: %s", esp_err_to_name(ret));
         enter_deep_sleep();
         return;
     }
 
-    err = shtc3_read(&temperature_c, &humidity_rh);
+    ret = shtc3_read(&temperature_c, &humidity_rh);
     shtc3_deinit();
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "SHTC3 read failed: %s", esp_err_to_name(err));
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "SHTC3 read failed: %s", esp_err_to_name(ret));
         enter_deep_sleep();
         return;
     }
 
-    err = read_battery_mv(&battery_mv);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Battery read failed: %s", esp_err_to_name(err));
+    ret = read_battery_mv(&battery_mv);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Battery read failed: %s", esp_err_to_name(ret));
         enter_deep_sleep();
         return;
     }
@@ -426,7 +366,6 @@ void app_main(void)
     build_payload(payload, temperature_c, humidity_rh, battery_mv);
 
     if (!lora_init_session()) {
-        debug_hold_awake_after_join_fail();
         enter_deep_sleep();
         return;
     }

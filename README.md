@@ -12,14 +12,12 @@ Behavior:
 
 ## Join mode
 
-Current default is **OTAA**.
-- Set `LORA_USE_OTAA 1` in `main/lora_config.h` to use OTAA.
-- Set `LORA_USE_OTAA 0` to use ABP fallback.
+This firmware is **OTAA-only**.
 
 ## Network profile used here
 
 - Region: `US915`
-- Uplink channels: `0-7` (sub-band 1)
+- Uplink channels: sub-band 1 (`0-7`, plus matching 500 kHz channel)
 - Radio: `SX1276` (RFM95W)
 
 ## Wiring (ItsyBitsy ESP32 profile)
@@ -59,20 +57,12 @@ Current default is **OTAA**.
 
 ## ChirpStack setup
 
-### OTAA (default)
 Create an OTAA device and copy these values into `main/lora_config.h`:
 - `LORA_APPEUI` (little-endian byte order for LMIC)
 - `LORA_DEVEUI` (little-endian byte order for LMIC)
 - `LORA_APPKEY` (MSB byte order)
 
-### ABP (fallback)
-If `LORA_USE_OTAA` is `0`, set:
-- `LORA_DEVADDR`
-- `LORA_NWKSKEY`
-- `LORA_APPSKEY`
-
-Set channel plan in ChirpStack/gateway to match:
-- US915 sub-band 1 (channels 0-7 + channel 64)
+Set device profile / region configuration to match US915 sub-band 1.
 
 ## Payload format (port 2)
 
@@ -81,27 +71,10 @@ Set channel plan in ChirpStack/gateway to match:
 - Bytes 2-3: humidity in centi-%RH, unsigned int16 big-endian.
 - Bytes 4-5: battery in millivolts, unsigned uint16 big-endian.
 
-Example decoder (JavaScript):
+Decoder file:
+- `chirpstack_decoder.js`
 
-```js
-function decodeUplink(input) {
-  const b = input.bytes;
-  if (b.length !== 6) return { errors: ["invalid length"] };
-
-  let t = (b[0] << 8) | b[1];
-  if (t & 0x8000) t -= 0x10000;
-  const h = (b[2] << 8) | b[3];
-  const v = (b[4] << 8) | b[5];
-
-  return {
-    data: {
-      temperature_c: t / 100,
-      humidity_rh: h / 100,
-      battery_v: v / 1000
-    }
-  };
-}
-```
+Use the contents of that file in ChirpStack's payload codec.
 
 ## Build
 

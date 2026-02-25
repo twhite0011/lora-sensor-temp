@@ -4,20 +4,17 @@
 
 // Target radio/module profile:
 // - Adafruit RFM95W (Semtech SX1276)
-// - US915 plan, channels 0-7 (sub-band 1)
+// - US915 plan
 
 // Wake/send period.
 #define REPORT_INTERVAL_SECONDS 30
 
 // Join timeout (OTAA).
-#define LORA_JOIN_TIMEOUT_SECONDS 180
+#define LORA_JOIN_TIMEOUT_SECONDS 120
 
 // RX window widening via LMIC clock-error compensation (% of MAX_CLOCK_ERROR).
 // Larger value keeps RX windows open longer (higher join robustness, more RX power).
 #define LORA_CLOCK_ERROR_PERCENT 5
-
-// OTAA is enabled by default. Set to 0 to use ABP fallback.
-#define LORA_USE_OTAA 1
 
 // I2C pins for SHTC3 (board-default STEMMA pins on ItsyBitsy ESP32).
 #define I2C_PORT_NUM 0
@@ -61,27 +58,9 @@ static const uint8_t LORA_DEVEUI[8] = { 0x10, 0x49, 0xce, 0xcd, 0x32, 0xa7, 0x87
 
 static const uint8_t LORA_APPKEY[16] = { 0xa9, 0x57, 0x4e, 0xed, 0xf7, 0x74, 0x26, 0x1e, 0x13, 0xd2, 0xc5, 0x2d, 0xad, 0xb5, 0x7e, 0x2a };
 
-// ABP fallback keys (used only if LORA_USE_OTAA == 0).
-#define LORA_DEVADDR 0x26011111
-
-static const uint8_t LORA_NWKSKEY[16] = {
-    0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00,
-};
-
-static const uint8_t LORA_APPSKEY[16] = {
-    0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00,
-};
-
 // Radio profile defaults.
 #define LORA_TX_DATARATE DR_SF7
 #define LORA_TX_POWER_DBM 14
 
-// US915 channels 0-7 = sub-band 1.
-// (For US915/AU915 builds only; valid values 1..8.)
+// US915 sub-band (1..8). Sub-band 1 = channels 0-7 (+500k channel 64).
 #define LORA_SUBBAND 1
